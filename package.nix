@@ -47,13 +47,13 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "ds4";
-  version = "0-unstable-2026-06-27";
+  version = "0-unstable-2026-08-09";
 
   src = fetchFromGitHub {
     owner = "antirez";
     repo = "ds4";
-    rev = "80ebbc396aee40eedc1d829222f3362d10fa4c6c";
-    hash = "sha256-Ieuc72GHZs20ModQfnvI5Me31n4Pj+WFYtsuqaKJceo=";
+    rev = "84cc882352757baf628a1776badf7cc54d584e28";
+    hash = "sha256-mdvKxI+/vDQcrpHepvXPmYcTjPTRnqJWWU0UFFnLJJk=";
   };
 
   # Tools that must be on PATH during the build:
@@ -89,7 +89,7 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preBuild
 
     make -B ds4 ds4-server ds4-bench ds4-eval ds4-agent \
-      CORE_OBJS='ds4.o ds4_distributed.o ds4_ssd.o ds4_rocm.o' \
+      CORE_OBJS='ds4.o ds4_distributed.o ds4_tp.o ds4_ssd.o ds4_rocm.o ds4_rocm_compat.o ds4_rocm_unavailable.o ds4_layer_pack.o' \
       CC=cc \
       CFLAGS="-O3 -ffast-math -g -Wall -Wextra -std=c99 -D_GNU_SOURCE -fno-finite-math-only -DDS4_ROCM_BUILD" \
       HIPCC=hipcc \
