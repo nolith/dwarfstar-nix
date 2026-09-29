@@ -6,6 +6,7 @@
   glibc,
   curl,
   makeWrapper,
+  python3Packages,
   # GPU target. Default is Strix Halo (Radeon 8050S/8060S, Ryzen AI MAX).
   # Override for other AMD GPUs, e.g. "gfx1100" (RDNA3 dGPU).
   rocmArch ? "gfx1151",
@@ -27,6 +28,7 @@ let
     rocm.hipblas
     rocm.hipblas-common
     rocm.hipblaslt
+    rocm.rocblas
     rocm.hipcub
     rocm.rocwmma
     rocm.rocprim
@@ -47,13 +49,13 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "ds4";
-  version = "0-unstable-2026-08-09";
+  version = "0-unstable-2026-09-20";
 
   src = fetchFromGitHub {
     owner = "antirez";
     repo = "ds4";
-    rev = "84cc882352757baf628a1776badf7cc54d584e28";
-    hash = "sha256-mdvKxI+/vDQcrpHepvXPmYcTjPTRnqJWWU0UFFnLJJk=";
+    rev = "0aaea5a238fb41a35106a551e73c8409dfb751ac";
+    hash = "sha256-Bo/td1HwVjw6bwz3BDwTP+ZSudkVFCo2aIVK4axvmXg=";
   };
 
   # Tools that must be on PATH during the build:
@@ -70,7 +72,7 @@ stdenv.mkDerivation (finalAttrs: {
     makeWrapper
   ];
 
-  buildInputs = includePkgs ++ [ rocm.rocblas ];
+  buildInputs = includePkgs;
 
   # hipcc / the ROCm clang look these up from the environment.
   ROCM_PATH = "${rocm.clr}";
@@ -79,6 +81,17 @@ stdenv.mkDerivation (finalAttrs: {
 
   dontConfigure = true;
   enableParallelBuilding = true;
+
+  # download_model.sh derives ROOT from dirname $0, expecting a writable git
+  # checkout: it defaults the GGUF directory to $ROOT/gguf and links
+  # $ROOT/ds4flash.gguf to the model it just fetched. Installed via Nix, $0 is
+  # in the read-only store, so the link fails with EACCES. Point ROOT at the
+  # working directory instead, overridable with DS4_ROOT.
+  postPatch = ''
+    substituteInPlace download_model.sh \
+      --replace-fail 'ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)' \
+        'ROOT=''${DS4_ROOT:-$PWD}'
+  '';
 
   # ds4's Makefile `strix-halo` target recursively re-pins DS4_LINK to hipcc,
   # whose bundled clang cannot host-link on NixOS (no bare ld/crt/dynamic-linker).
@@ -89,13 +102,13 @@ stdenv.mkDerivation (finalAttrs: {
     runHook preBuild
 
     make -B ds4 ds4-server ds4-bench ds4-eval ds4-agent \
-      CORE_OBJS='ds4.o ds4_distributed.o ds4_tp.o ds4_ssd.o ds4_rocm.o ds4_rocm_compat.o ds4_rocm_unavailable.o ds4_layer_pack.o' \
+      CORE_OBJS='ds4.o ds4_image.o ds4_distributed.o ds4_tp.o ds4_ssd.o ds4_rocm.o ds4_rocm_compat.o ds4_rocm_unavailable.o ds4_layer_pack.o $(ROCM_MMQ_OBJS)' \
       CC=cc \
       CFLAGS="-O3 -ffast-math -g -Wall -Wextra -std=c99 -D_GNU_SOURCE -fno-finite-math-only -DDS4_ROCM_BUILD" \
       HIPCC=hipcc \
       ROCM_CFLAGS="-O3 -ffast-math -g -fno-finite-math-only -pthread -D__HIP_PLATFORM_AMD__ -Wno-unused-command-line-argument --offload-arch=${rocmArch} --rocm-device-lib-path=${deviceLibs} --gcc-install-dir=${gccInstallDir} -idirafter ${glibc.dev}/include ${includeFlags}" \
       DS4_LINK="g++" \
-      DS4_LINK_LIBS="-lm -pthread -lhipblas -lhipblaslt -lamdhip64 ${linkFlags}" \
+      DS4_LINK_LIBS="-lm -pthread -lhipblas -lhipblaslt -lrocblas -lamdhip64 ${linkFlags}" \
       -j$NIX_BUILD_CORES
 
     runHook postBuild
@@ -106,10 +119,17 @@ stdenv.mkDerivation (finalAttrs: {
 
     install -Dm755 ds4 ds4-server ds4-bench ds4-eval ds4-agent -t $out/bin
 
-    # Model downloader, wrapped so curl is available.
+    # Model downloader: curl handles smaller files, while the official
+    # Hugging Face CLI and hf-xet provide resumable large-model downloads.
     install -Dm755 download_model.sh $out/bin/ds4-download-model
     wrapProgram $out/bin/ds4-download-model \
-      --prefix PATH : ${lib.makeBinPath [ curl ]}
+      --prefix PATH : ${
+        lib.makeBinPath [
+          curl
+          python3Packages.huggingface-hub
+          python3Packages.hf-xet
+        ]
+      }
 
     runHook postInstall
   '';
